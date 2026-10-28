@@ -10,13 +10,22 @@ from datetime import datetime
 
 from fabrictestbed_extensions.fablib.fablib import FablibManager as fablib
 from .models import SiteTopology, Node, NIC, DPU, FPGA, GPU, NVMe, PersistentVolume, FacilityPort
+from . import _realization
 
 logger = logging.getLogger(__name__)
 
 
 class SliceDeploymentError(Exception):
-    """Raised when slice deployment fails."""
-    pass
+    """Deployment failure with optional context for inspecting a partial slice."""
+
+    def __init__(self, *args, phase=None, slice_name=None, slice_id=None,
+                 slice=None, diagnostics=None):
+        super().__init__(*args)
+        self.phase = phase
+        self.slice_name = slice_name
+        self.slice_id = slice_id
+        self.slice = slice
+        self.diagnostics = diagnostics if diagnostics is not None else {}
 
 
 def check_or_generate_unique_slice_name(base_name: str, use_timestamp: bool = False) -> str:
@@ -54,7 +63,7 @@ def check_or_generate_unique_slice_name(base_name: str, use_timestamp: bool = Fa
         return base_name
 
 
-def add_gpus_to_node(fab_node, node: Node) -> None:
+def add_gpus_to_node(fab_node, node: Node, *, strict: bool = False) -> None:
     """
     Add GPU components to a FABRIC node.
     
@@ -67,10 +76,12 @@ def add_gpus_to_node(fab_node, node: Node) -> None:
             fab_node.add_component(name=gpu.name, model=gpu.model)
             logger.debug(f"Added GPU {gpu.name} ({gpu.model}) to {node.hostname}")
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"Failed to add GPU {gpu.name} to {node.hostname}: {e}")
 
 
-def add_dpus_to_node(fab_node, node: Node) -> None:
+def add_dpus_to_node(fab_node, node: Node, *, strict: bool = False) -> None:
     """
     Add DPU components to a FABRIC node.
     
@@ -83,10 +94,12 @@ def add_dpus_to_node(fab_node, node: Node) -> None:
             fab_node.add_component(name=dpu.name, model=dpu.model)
             logger.debug(f"Added DPU {dpu.name} ({dpu.model}) to {node.hostname}")
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"Failed to add DPU {dpu.name} to {node.hostname}: {e}")
 
 
-def add_fpgas_to_node(fab_node, node: Node) -> None:
+def add_fpgas_to_node(fab_node, node: Node, *, strict: bool = False) -> None:
     """
     Add FPGA components to a FABRIC node.
     
@@ -99,10 +112,12 @@ def add_fpgas_to_node(fab_node, node: Node) -> None:
             fab_node.add_component(name=fpga.name, model=fpga.model)
             logger.debug(f"Added FPGA {fpga.name} ({fpga.model}) to {node.hostname}")
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"Failed to add FPGA {fpga.name} to {node.hostname}: {e}")
 
 
-def add_nvmes_to_node(fab_node, node: Node) -> None:
+def add_nvmes_to_node(fab_node, node: Node, *, strict: bool = False) -> None:
     """
     Add NVMe components to a FABRIC node.
     
@@ -115,10 +130,12 @@ def add_nvmes_to_node(fab_node, node: Node) -> None:
             fab_node.add_component(name=nvme.name, model=nvme.model)
             logger.debug(f"Added NVMe {nvme.name} ({nvme.model}) to {node.hostname}")
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"Failed to add NVMe {nvme.name} to {node.hostname}: {e}")
 
 
-def add_nics_to_node(fab_node, node: Node) -> None:
+def add_nics_to_node(fab_node, node: Node, *, strict: bool = False) -> None:
     """
     Add NIC components to a FABRIC node.
     
@@ -131,10 +148,12 @@ def add_nics_to_node(fab_node, node: Node) -> None:
             fab_node.add_component(name=nic.name, model=nic.model)
             logger.debug(f"Added NIC {nic.name} ({nic.model}) to {node.hostname}")
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"Failed to add NIC {nic.name} to {node.hostname}: {e}")
 
 
-def add_persistent_storage_to_node(fab_node, node: Node) -> None:
+def add_persistent_storage_to_node(fab_node, node: Node, *, strict: bool = False) -> None:
     """
     Add persistent storage volumes to a FABRIC node.
     
@@ -147,6 +166,8 @@ def add_persistent_storage_to_node(fab_node, node: Node) -> None:
             fab_node.add_storage(name=volume.name)
             logger.debug(f"Added storage {volume.name} ({volume.size}GB) to {node.hostname}")
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"Failed to add storage {volume.name} to {node.hostname}: {e}")
 
 
@@ -170,7 +191,7 @@ def add_postboot_commands_to_node(fab_node, node: Node) -> None:
             print(f"   ⚠️ Failed to add post-boot command to {node.hostname}: {e}")
 
 
-def add_facility_ports_to_slice(topology: SiteTopology, slice) -> dict:
+def add_facility_ports_to_slice(topology: SiteTopology, slice, *, strict: bool = False) -> dict:
     """
     Add facility ports to the slice.
     
@@ -205,6 +226,8 @@ def add_facility_ports_to_slice(topology: SiteTopology, slice) -> dict:
             logger.info(f"Successfully added facility port: {fp.name}")
             
         except Exception as e:
+            if strict:
+                raise
             logger.error(f"Failed to add facility port {fp.name}: {e}")
             print(f"   ❌ Failed to add facility port {fp.name}: {e}")
             continue
@@ -212,7 +235,10 @@ def add_facility_ports_to_slice(topology: SiteTopology, slice) -> dict:
     return facility_port_objects
 
 
-def create_and_bind_networks(topology: SiteTopology, slice, facility_port_objects: dict = None) -> dict:
+def create_and_bind_networks(
+    topology: SiteTopology, slice, facility_port_objects: dict = None, *,
+    strict: bool = False, _manifest=None, _diagnostics=None,
+) -> dict:
     """
     Create FABRIC networks and bind node interfaces and facility ports to them.
     Handles NIC, DPU, FPGA interfaces, and facility ports.
@@ -229,7 +255,30 @@ def create_and_bind_networks(topology: SiteTopology, slice, facility_port_object
         facility_port_objects = {}
     
     network_objects = {}
-    
+
+    if strict:
+        manifest = _manifest if _manifest is not None else _realization.requested_manifest(topology)
+        diagnostics = _diagnostics if _diagnostics is not None else {}
+        groups = _realization.resolve_interfaces(slice, manifest, facility_port_objects)
+        for name, requested in manifest["networks"].items():
+            add_network = slice.add_l2network if requested["type"].startswith("L2") else slice.add_l3network
+            network_objects[name] = add_network(
+                name=name, type=requested["type"], interfaces=groups[name]
+            )
+            if network_objects[name] is None:
+                raise ValueError(f"Provider did not create NetworkService {name}")
+            # FABlib's returned name is authoritative for provider normalization.
+            provider_name = network_objects[name].get_name()
+            if requested["type"].startswith("L2") and provider_name != name:
+                raise ValueError(f"Incorrect NetworkService name: requested {name}, got {provider_name}")
+            requested["provider_name"] = provider_name
+        _realization._unique(
+            [n["provider_name"] for n in manifest["networks"].values()],
+            "provider NetworkService name",
+        )
+        _realization.verify(slice, manifest, diagnostics)
+        return network_objects
+
     # Create networks
     for net_id, network in topology.site_topology_networks.networks.items():
         try:
@@ -667,7 +716,10 @@ def enable_public_routing(slice, topology: SiteTopology, networks: List[str] = N
 def deploy_topology_to_fabric(
     topology: SiteTopology,
     slice_name: str,
-    use_timestamp: bool = False
+    use_timestamp: bool = False,
+    *,
+    provision_only: bool = False,
+    strict: bool = False,
 ) -> Optional[object]:
     """
     Create and submit a FABRIC slice from the provided topology.
@@ -689,17 +741,27 @@ def deploy_topology_to_fabric(
         topology: Site topology model
         slice_name: Proposed name for the slice
         use_timestamp: If True, ensure uniqueness by timestamping
+        provision_only: Skip all guest work and SSH waiting; implies strict.
+        strict: Verify requested topology before and after provider submission.
         
     Returns:
-        The created and submitted FABRIC slice, or None on failure
+        The created and submitted FABRIC slice.
         
     Raises:
         SliceDeploymentError: If deployment fails
     """
-    # Generate unique slice name
-    unique_slice_name = check_or_generate_unique_slice_name(slice_name, use_timestamp)
-    
+    strict = strict or provision_only
+    slice = None
+    unique_slice_name = slice_name
+    phase = "preflight"
+    diagnostics = {}
     try:
+        if strict:
+            diagnostics["requested_topology"] = topology.model_dump()
+            manifest = _realization.requested_manifest(topology)
+            diagnostics["expected"] = manifest
+        unique_slice_name = check_or_generate_unique_slice_name(slice_name, use_timestamp)
+        phase = "construction"
         fab = fablib()
         slice = fab.new_slice(name=unique_slice_name)
         logger.info(f"Creating slice: {unique_slice_name}")
@@ -732,26 +794,43 @@ def deploy_topology_to_fabric(
             fab_node = slice.add_node(**add_node_kwargs)
             
             # Add components
-            add_gpus_to_node(fab_node, node)
-            add_dpus_to_node(fab_node, node)
-            add_fpgas_to_node(fab_node, node)
-            add_nvmes_to_node(fab_node, node)
-            add_nics_to_node(fab_node, node)
-            add_persistent_storage_to_node(fab_node, node)
+            add_gpus_to_node(fab_node, node, strict=strict)
+            add_dpus_to_node(fab_node, node, strict=strict)
+            add_fpgas_to_node(fab_node, node, strict=strict)
+            add_nvmes_to_node(fab_node, node, strict=strict)
+            add_nics_to_node(fab_node, node, strict=strict)
+            add_persistent_storage_to_node(fab_node, node, strict=strict)
             
             # Add post-boot commands if specified
-            add_postboot_commands_to_node(fab_node, node)
+            if not provision_only:
+                add_postboot_commands_to_node(fab_node, node)
         
         # Add facility ports if defined
-        facility_port_objects = add_facility_ports_to_slice(topology, slice)
+        facility_port_objects = add_facility_ports_to_slice(topology, slice, strict=strict)
         
         # Create and bind networks (handles NICs, DPUs, FPGAs, and facility ports)
-        create_and_bind_networks(topology, slice, facility_port_objects)
+        phase = "pre_submission_verification" if strict else "construction"
+        create_and_bind_networks(
+            topology, slice, facility_port_objects, strict=strict,
+            _manifest=manifest if strict else None, _diagnostics=diagnostics,
+        )
         
         # Submit slice
         logger.info("Submitting slice to FABRIC...")
         print("\n🚀 Submitting slice...")
-        slice.submit()
+        phase = "submission"
+        if provision_only:
+            slice.submit(wait=True, progress=False, post_boot_config=False, wait_ssh=False)
+        else:
+            slice.submit()
+        if strict:
+            phase = "provider_refresh"
+            _realization.refresh_provider(slice)
+            phase = "post_submission_verification"
+            _realization.verify(slice, manifest, diagnostics, allocated=True)
+        if provision_only:
+            print(f"✅ Slice '{unique_slice_name}' provisioned and topology verified")
+            return slice
         
         # At the end, update the print statement:
         logger.info(f"Slice '{unique_slice_name}' submitted successfully")
@@ -767,7 +846,10 @@ def deploy_topology_to_fabric(
         error_msg = f"Failed to deploy slice: {e}"
         logger.critical(error_msg)
         print(f"❌ {error_msg}")
-        raise SliceDeploymentError(error_msg) from e
+        raise SliceDeploymentError(
+            error_msg, phase=phase, slice_name=unique_slice_name,
+            **_realization.failure_context(slice, diagnostics),
+        ) from e
 
 
 def deploy_and_configure_slice(
@@ -775,7 +857,10 @@ def deploy_and_configure_slice(
     slice_name: str,
     configure_selinux: bool = True,
     setup_ansible: bool = False,
-    use_timestamp: bool = False
+    use_timestamp: bool = False,
+    *,
+    provision_only: bool = False,
+    strict: bool = False,
 ) -> Optional[object]:
     """
     Complete slice deployment and configuration workflow.
@@ -794,24 +879,40 @@ def deploy_and_configure_slice(
         configure_selinux: If True, applies SELinux settings from topology
         setup_ansible: If True, sets up Ansible environment
         use_timestamp: If True, adds timestamp to slice name
+        provision_only: Return after verified provisioning; implies strict.
+        strict: Verify topology, retaining the normal guest workflow.
         
     Returns:
-        FABRIC slice object or None on failure
+        FABRIC slice object, or None on legacy (non-strict) failure.
+
+    Raises:
+        SliceDeploymentError: On strict/provision-only deployment failure.
     """
     # Import here to avoid circular imports
     from .network_config import configure_node_interfaces
     from .ssh_setup import setup_passwordless_ssh
     from .selinux_management import configure_selinux_from_topology
     from .ansible_setup import setup_ansible_environment
-    
+
+    slice = None
+    deployed_name = slice_name
     try:
         # Step 1: Deploy slice
         print("="*70)
         print("STEP 1: Deploying FABRIC Slice")
         print("="*70)
-        slice = deploy_topology_to_fabric(topology, slice_name, use_timestamp)
+        slice = deploy_topology_to_fabric(
+            topology, slice_name, use_timestamp,
+            provision_only=provision_only, strict=strict,
+        )
         if not slice:
+            if strict or provision_only:
+                raise SliceDeploymentError("Deployment returned no verified slice")
             return None
+        if provision_only:
+            return slice
+        if strict:
+            deployed_name = slice.get_name()
         
         # Step 2: Configure L3 networks
         print("\n" + "="*70)
@@ -853,6 +954,14 @@ def deploy_and_configure_slice(
         return slice
         
     except Exception as e:
+        if strict or provision_only:
+            if isinstance(e, SliceDeploymentError) and slice is None:
+                raise
+            raise SliceDeploymentError(
+                f"Slice configuration failed: {e}", phase="guest_configuration",
+                slice_name=deployed_name,
+                **_realization.failure_context(slice, {}),
+            ) from e
         logger.error(f"Deployment failed: {e}")
         print(f"\n❌ Deployment failed: {e}")
         import traceback

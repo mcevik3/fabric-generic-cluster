@@ -322,6 +322,128 @@ slice = deploy_topology_to_fabric(topology, "slice-name")
 configure_l3_networks(slice, topology)
 ```
 
+Both deployment entry points accept optional keyword-only mode flags:
+
+```python
+deploy_topology_to_fabric(
+    topology, slice_name, use_timestamp=False,
+    *, provision_only=False, strict=False,
+)
+deploy_and_configure_slice(
+    topology, slice_name, configure_selinux=True,
+    setup_ansible=False, use_timestamp=False,
+    *, provision_only=False, strict=False,
+)
+```
+
+Existing positional arguments and defaults are unchanged.
+
+| Mode | Topology verification | Guest behavior |
+| --- | --- | --- |
+| Default | Existing best-effort construction | Existing FABlib post-boot/SSH behavior; the all-in-one wrapper also configures guests |
+| `strict=True` | Required before and after submission | Existing guest workflow remains enabled |
+| `provision_only=True` | Required; implies `strict=True` | No guest commands, interface discovery, IP/routes, persistent networking, public routing, post-boot command registration, DPU configuration, FPGA programming, or SSH waiting |
+
+For example, provision an adapter-rendered topology for provider inspection:
+
+```python
+from fabric_generic_cluster import load_topology_from_yaml_file
+from fabric_generic_cluster.deployment import (
+    deploy_and_configure_slice, SliceDeploymentError,
+)
+
+topology = load_topology_from_yaml_file("rendered-topology.yaml")
+try:
+    slice = deploy_and_configure_slice(
+        topology, "hardware-check", provision_only=True,
+    )
+except SliceDeploymentError as error:
+    print(error.phase, error.slice_name, error.slice_id)
+    diagnostics = error.diagnostics
+    partial_slice = error.slice  # Retained for inspection/recovery, if created.
+    raise
+```
+
+Provisioning-only calls `slice.submit(wait=True, progress=False,
+post_boot_config=False, wait_ssh=False)`. Authentication and provider resource-state
+waiting remain enabled. `progress=False` also avoids FABlib's Jupyter display/wait
+branch. The all-in-one wrapper returns immediately after verified provisioning;
+it does not run its network, SSH, SELinux, or Ansible steps. Guest-dependent
+listing/display methods are not used in this mode.
+
+**Strict verification contract.** The parsed `SiteTopology` supplies node
+hostnames, component family/name/model, requested interface counts, service
+names/types, and bindings. Effective names must be unique in their scope.
+Two same-model devices with different names are separate allocations. Every
+requested interface must resolve within its component, and every nonempty binding
+must name a requested service. Duplicate or incompatible interface assignments
+fail. Services are constructed with all resolved interfaces, then their actual
+types and exact membership are checked before submission. Errors that the legacy
+construction helpers log and skip become failures in strict mode.
+
+Interface selection retains the existing positional behavior: interface entries
+in dictionary order select provider interfaces in their initial enumeration order.
+The selected FIM names and IDs are retained across submission and refresh; refreshed
+list positions are never used to select replacements. Unbound second ports and
+unused provider interfaces are allowed. This does not define physical p1/p2
+selectors or imply that `iface1` means physical port 1.
+
+After submission, strict mode explicitly refreshes the slice, slivers, and topology
+using `update_slice()`, `update_slivers()`, and `update_topology()`. This avoids
+`Slice.update()` suppressing refresh errors. A successful slice state
+(`StableOK` or `ModifyOK`), active reservations for required nodes/facilities and
+services, and matching active sliver evidence are required. `isStable()` alone is
+insufficient: it also accepts failed states. Components are verified under their
+parent node reservation; independent component sliver IDs are not required.
+
+Verification reads the refreshed FIM graph by resource ID, including entries that
+name-keyed dictionaries could collapse. It checks component identities/models,
+selected interfaces, requested services, and exact service membership by following
+raw service-port peers. Unresolved members cannot disappear through FABlib wrapper
+filtering. IPv4/IPv6 and FABNetv4/FABNetv6 type representations are normalized,
+including Ext variants; the service name returned during L3 construction is retained.
+Before submission and after refresh, standalone provider NetworkService names must
+match those expected provider names. Additional services are rejected. Internal
+services owned by nodes/components (such as NIC OVS services) are excluded from
+this set comparison by raw graph ownership, not by type or name prefix. Raw
+duplicate-service checks still include these internal services.
+Missing, stale, ambiguous, failed, or mismatched evidence raises an error.
+
+This is a provider topology/allocation check. It does not establish guest driver
+readiness, firmware state, dataplane connectivity, guest IP configuration, or
+application readiness. Successful provisioning leaves that work for a later phase.
+Strict mode with full configuration retains the existing guest helpers and their
+error-handling behavior; it does not add a guest health-verification contract.
+
+**Failure and recovery.** `SliceDeploymentError` remains compatible with ordinary
+exception construction and adds optional `phase`, `slice_name`, `slice_id`, `slice`,
+and `diagnostics` attributes. Diagnostics contain expected resources, actual raw
+provider resources, binding/type mismatches, reservation states/notices, and a
+serialized FIM topology where available. Collection errors are recorded without
+replacing the original exception, which remains in `__cause__`. No failed slice is
+automatically deleted. Inspect the retained slice or retrieve it by its recorded ID
+with FABlib before deciding whether to repair or explicitly delete it. A refresh
+failure means verification is incomplete; it does not prove allocation failed.
+Both strict/provision-only entry points propagate failures. The all-in-one wrapper
+retains its legacy `None` return on failures when both flags are false.
+
+**SDK context and limits.** Offline tests use installed FABlib
+(`fabrictestbed-extensions`) **1.9.5**, FIM **1.9.0**, and Python **3.13.2**.
+They exercise the normal entry point with fake providers and real local FIM/FABlib
+construction, including rendered DPU IPv4 and U280 L2Bridge fixtures. Complete-list
+construction preserved **L2Bridge, L2STS, and L2PTP** in this installation. Incremental
+L2 attachments can cause FABlib to recalculate service types. Complete-list
+construction is not assumed to preserve L2PTP on every SDK version: if the installed
+provider changes a requested type, strict mode fails with requested/actual types.
+There is no model substitution or SDK patch. Tests make no live FABRIC calls and do
+not constitute new live acceptance results.
+
+Notebook integration is deferred to C4.2b. Guest DPU discovery fixes, guest network
+changes, FPGA programming, physical port selection, multiple FABNet services per VM,
+and new scheduling behavior are outside this change. Strict mode accepts component
+models mapped by the installed SDK in the supported NIC/DPU/GPU/FPGA/NVMe families;
+it does not expand the adapter or schema.
+
 ### Network Configuration
 
 ```python

@@ -1,0 +1,44 @@
+site_topology_nodes:
+  nodes:
+    node1:
+      name: vm-a
+      hostname: vm-a
+      site: SRI
+      worker: ''
+      capacity:
+        cpu: 2
+        ram: 4
+        disk: 20
+        os: default_rocky_9
+      pci:
+        dpu:
+          dpu1:
+            name: dpu1
+            model: NIC_ConnectX_7_100
+            interfaces:
+              iface1:
+                device: eth1
+                connection: conn-eth1
+                binding: fabnet
+                ipv4: {}
+                ipv6: {}
+        fpga: {}
+        gpu: {}
+        nvme: {}
+        network: {}
+      persistent_storage:
+        volume: {}
+      specific:
+        openstack:
+          control: 'false'
+          network: 'false'
+          compute: 'false'
+          storage: 'false'
+site_topology_networks:
+  networks:
+    net1:
+      name: fabnet
+      type: IPv4
+      subnet: {}
+site_topology_facility_ports:
+  facility_ports: {}
