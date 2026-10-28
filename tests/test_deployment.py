@@ -168,6 +168,57 @@ def test_provision_approved(provider, approved, monkeypatch):
         call.assert_not_called()
 
 
+@pytest.mark.parametrize("family,model,count", [
+    ("network", "NIC_Basic", 1),
+    ("dpu", "NIC_ConnectX_7_100", 2),
+    ("fpga", "FPGA_Xilinx_U280", 2),
+])
+def test_real_interface_resolution_without_deprecated_accessor(provider, monkeypatch, family, model, count):
+    requested = topology(model, family, count)
+    slice = provider.new_slice("interface-api")
+    node = slice.add_node(name="vm-a", site="SRI")
+    component = node.add_component(name="device1", model=model)
+    interfaces = component.get_interfaces()
+    expected = [{"name": i.get_fim().name, "node_id": i.get_fim().node_id} for i in interfaces]
+
+    # 1.9.5 retains this deprecated alias; 2.0.6 removes it. Keep the real
+    # Interface, get_fim(), and FIM objects while reproducing the newer API.
+    monkeypatch.delattr(Interface, "get_fim_interface", raising=False)
+    assert all(isinstance(i, Interface) and not hasattr(i, "get_fim_interface") for i in interfaces)
+    manifest = r.requested_manifest(requested)
+    groups = r.resolve_interfaces(slice, manifest, {})
+
+    # Slice.get_node() may rebuild wrappers; the selected FIM identity is stable.
+    assert all(isinstance(i, Interface) and not hasattr(i, "get_fim_interface") for i in groups["data"])
+    assert [{"name": i.get_fim().name, "node_id": i.get_fim().node_id} for i in groups["data"]] == expected
+    assert manifest["networks"]["data"]["members"] == expected
+    selected = manifest["nodes"]["vm-a"]["components"]["device1"]["interfaces"]
+    assert [i["provider_interface"] for i in selected] == expected
+    assert slice.submissions == []
+
+
+def test_real_facility_interface_resolution_without_deprecated_accessor(provider, monkeypatch):
+    requested = topology()
+    requested.site_topology_nodes.nodes.clear()
+    requested.site_topology_facility_ports.facility_ports["fp1"] = FacilityPort(
+        name="external-port", site="SRI", vlan=123, binding="data"
+    )
+    slice = provider.new_slice("facility-interface-api")
+    port = slice.add_facility_port(name="external-port", site="SRI", vlan="123")
+    interface = port.get_interfaces()[0]
+    expected = {"name": interface.get_fim().name, "node_id": interface.get_fim().node_id}
+    monkeypatch.delattr(Interface, "get_fim_interface", raising=False)
+    assert isinstance(interface, Interface) and not hasattr(interface, "get_fim_interface")
+    manifest = r.requested_manifest(requested)
+
+    groups = r.resolve_interfaces(slice, manifest, {"external-port": port})
+
+    assert groups["data"][0] is interface
+    assert manifest["networks"]["data"]["members"] == [expected]
+    assert manifest["facilities"]["external-port"]["provider_interface"] == expected
+    assert slice.submissions == []
+
+
 @pytest.mark.parametrize("strict", [False, True])
 def test_default_and_strict_keep_guest_behavior(provider, monkeypatch, strict):
     calls = []

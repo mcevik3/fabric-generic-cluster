@@ -110,7 +110,8 @@ def resolve_interfaces(slice, manifest, facility_ports):
     selected = []
 
     def bind(iface, request):
-        identity = _identity(iface.get_fim_interface())
+        # get_fim() spans supported SDK versions; its deprecated alias was removed.
+        identity = _identity(iface.get_fim())
         request["provider_interface"] = identity
         selected.append(_token(identity))
         if request["binding"]:

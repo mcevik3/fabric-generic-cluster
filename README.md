@@ -438,6 +438,15 @@ provider changes a requested type, strict mode fails with requested/actual types
 There is no model substitution or SDK patch. Tests make no live FABRIC calls and do
 not constitute new live acceptance results.
 
+Strict interface resolution uses `Interface.get_fim()`, available in SDK 1.9.0,
+1.9.5, and 2.0.6. The old `get_fim_interface()` alias was deprecated in 1.7.0,
+remains in the local 1.9.5 test environment, and is absent in 2.0.6. This explains
+why the original 359-test suite passed despite the later JupyterHub accessor
+failure. Regression tests now remove that alias from real local FABlib Interface
+objects and exercise NIC, DPU, FPGA, and facility-port resolution, checking the
+selected FIM names and IDs. SDK 1.9.0/2.0.6 compatibility here is based on wheel
+source inspection; the full runtime suite still uses the installed 1.9.5 SDK.
+
 Notebook integration is deferred to C4.2b. Guest DPU discovery fixes, guest network
 changes, FPGA programming, physical port selection, multiple FABNet services per VM,
 and new scheduling behavior are outside this change. Strict mode accepts component
